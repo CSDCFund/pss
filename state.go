@@ -35,7 +35,6 @@ type connConfig struct {
 type txBufferEntry struct {
 	SeqNumber uint16
 	txCount   uint8
-	acked     bool
 	Data      []byte
 }
 
@@ -104,7 +103,7 @@ func (self *conn) handleSegment(segment *segment) error {
 		if segment.EAK {
 			eakHeader := segment.VarHeader.(*eakVarHeader)
 			for _, eak := range eakHeader.EakNumbers {
-				self.markEaked(eak)
+				self.removeFromTxBuffer(eak)
 			}
 		}
 
@@ -128,17 +127,17 @@ func (self *conn) validateSegment(segment *segment) error {
 	return nil
 }
 
-func (self *conn) markEaked(EakNumber uint16) {
+func (self *conn) removeFromTxBuffer(SeqNumber uint16) {
 	for element := self.txBuffer.Front(); element != nil; element = element.Next() {
 		entry := element.Value.(*txBufferEntry)
 
-		if entry.SeqNumber == EakNumber {
-			entry.acked = true
+		if entry.SeqNumber == SeqNumber {
+			self.txBuffer.Remove(element)
 			break
 		}
 
-		// Check for positive unsigned diff: EakNumber > SeqNumber
-		if diff := EakNumber - entry.SeqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+		// Check for positive unsigned diff: buffer SeqNumber > input SeqNumber
+		if diff := entry.SeqNumber - SeqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
 			break
 		}
 	}
