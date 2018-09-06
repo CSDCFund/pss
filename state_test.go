@@ -12,7 +12,7 @@ func TestSimpleAckHandling(t *testing.T) {
 	conn.txNextSeq = 1
 	conn.txOldestUnacked = conn.txNextSeq - 1
 
-	enqueueSegments(conn, 4)
+	enqueueTxSegments(conn, 4)
 
 	inputSegment := &segment{
 		ACK:       true,
@@ -32,7 +32,7 @@ func TestUintWrappingAckHandling(t *testing.T) {
 	conn.txNextSeq = 0xFFFE
 	conn.txOldestUnacked = conn.txNextSeq - 1
 
-	enqueueSegments(conn, 6)
+	enqueueTxSegments(conn, 6)
 
 	inputSegment := &segment{
 		ACK:       true,
@@ -61,7 +61,7 @@ func TestEakHandling(t *testing.T) {
 	conn.txNextSeq = 1
 	conn.txOldestUnacked = conn.txNextSeq - 1
 
-	enqueueSegments(conn, 4)
+	enqueueTxSegments(conn, 4)
 
 	inputSegment := &segment{
 		ACK:       true,
@@ -77,6 +77,54 @@ func TestEakHandling(t *testing.T) {
 	validateTxBuffer(conn, []uint16{2}, t)
 }
 
+func TestOutOfSeqRxBuffer(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = open
+	conn.config = defaultConfig()
+	conn.rxLastInSeq = 0
+
+	inputSegment := &segment{
+		SeqNumber: 6,
+		Data: []byte{0},
+	}
+
+	conn.handleSegment(inputSegment)
+	validateRxBuffer(conn, []uint16{6}, t)
+
+	inputSegment = &segment{
+		SeqNumber: 2,
+		Data: []byte{0},
+	}
+
+	conn.handleSegment(inputSegment)
+	validateRxBuffer(conn, []uint16{2, 6}, t)
+
+	inputSegment = &segment{
+		SeqNumber: 3,
+		Data: []byte{0},
+	}
+
+	conn.handleSegment(inputSegment)
+	validateRxBuffer(conn, []uint16{2, 3, 6}, t)
+
+	inputSegment = &segment{
+		SeqNumber: 7,
+		Data: []byte{0},
+	}
+
+	conn.handleSegment(inputSegment)
+	validateRxBuffer(conn, []uint16{2, 3, 6, 7}, t)
+
+	inputSegment = &segment{
+		SeqNumber: 1,
+		Data: []byte{0},
+	}
+
+	conn.handleSegment(inputSegment)
+	validateRxBuffer(conn, []uint16{6, 7}, t)
+}
+
 func defaultConfig() *connConfig {
 	return &connConfig{
 		MaxOutstandingSegmentsSelf: 10,
@@ -90,7 +138,7 @@ func defaultConfig() *connConfig {
 	}
 }
 
-func enqueueSegments(conn *conn, count int) {
+func enqueueTxSegments(conn *conn, count int) {
 	for i := 0; i < count; i++ {
 		entry := &txBufferEntry{
 			SeqNumber: conn.txNextSeq,
@@ -110,6 +158,20 @@ func validateTxBuffer(conn *conn, seqNumbers []uint16, t *testing.T) {
 	for i, seq := range seqNumbers {
 		if seq != element.Value.(*txBufferEntry).SeqNumber {
 			t.Fatalf("txBuffer SeqNumber %d at position %d doesn't match expected %d", element.Value.(*txBufferEntry).SeqNumber, i, seq)
+		}
+		element = element.Next()
+	}
+}
+
+func validateRxBuffer(conn *conn, seqNumbers []uint16, t *testing.T) {
+	if len(seqNumbers) != conn.rxBuffer.Len() {
+		t.Fatalf("rxBuffer length %d doesn't match expected length %d", conn.rxBuffer.Len(), len(seqNumbers))
+	}
+
+	element := conn.rxBuffer.Front()
+	for i, seq := range seqNumbers {
+		if seq != element.Value.(*rxBufferEntry).SeqNumber {
+			t.Fatalf("rxBuffer SeqNumber %d at position %d doesn't match expected %d", element.Value.(*rxBufferEntry).SeqNumber, i, seq)
 		}
 		element = element.Next()
 	}

@@ -113,6 +113,8 @@ func (self *conn) handleSegment(segment *segment) error {
 				self.receivedData(segment.Data)
 				self.rxLastInSeq++
 				self.flushInSeqRxBuffer()
+			} else {
+				self.bufferRxData(segment.SeqNumber, segment.Data)
 			}
 		}
 	default:
@@ -127,17 +129,17 @@ func (self *conn) validateSegment(segment *segment) error {
 	return nil
 }
 
-func (self *conn) removeFromTxBuffer(SeqNumber uint16) {
+func (self *conn) removeFromTxBuffer(seqNumber uint16) {
 	for element := self.txBuffer.Front(); element != nil; element = element.Next() {
 		entry := element.Value.(*txBufferEntry)
 
-		if entry.SeqNumber == SeqNumber {
+		if entry.SeqNumber == seqNumber {
 			self.txBuffer.Remove(element)
 			break
 		}
 
-		// Check for positive unsigned diff: buffer SeqNumber > input SeqNumber
-		if diff := entry.SeqNumber - SeqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+		// Check for positive unsigned diff: buffer SeqNumber > input seqNumber
+		if diff := entry.SeqNumber - seqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
 			break
 		}
 	}
@@ -159,7 +161,7 @@ func (self *conn) clearAckedTxBuffer() {
 }
 
 func (self *conn) receivedData(data []byte) {
-	// TODO Forward new data to application layer
+	// TODO Forward new data to listener
 }
 
 func (self *conn) flushInSeqRxBuffer() {
@@ -175,5 +177,33 @@ func (self *conn) flushInSeqRxBuffer() {
 		self.rxBuffer.Remove(element)
 		self.receivedData(entry.Data)
 		self.rxLastInSeq++
+	}
+}
+
+func (self *conn) bufferRxData(seqNumber uint16, data []byte) {
+	var element *list.Element
+	for element = self.rxBuffer.Front(); element != nil; element = element.Next() {
+		entry := element.Value.(*rxBufferEntry)
+
+		// Duplicate segment already buffered
+		if entry.SeqNumber == seqNumber {
+			return
+		}
+
+		// Check for positive unsigned diff: entry SeqNumber > input seqNumber
+		if diff := entry.SeqNumber - seqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+			break
+		}
+	}
+
+	entry := &rxBufferEntry{
+		SeqNumber: seqNumber,
+		Data: data,
+	}
+
+	if element != nil {
+		self.rxBuffer.InsertBefore(entry, element)
+	} else {
+		self.rxBuffer.PushBack(entry)
 	}
 }
