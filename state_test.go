@@ -53,6 +53,35 @@ func TestUintWrappingAckHandling(t *testing.T) {
 	validateTxBuffer(conn, []uint16{2, 3}, t)
 }
 
+func TestIntWrappingAckHandling(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = open
+	conn.config = defaultConfig()
+	conn.txNextSeq = 0x7FFE
+	conn.txOldestUnacked = conn.txNextSeq - 1
+
+	enqueueTxSegments(conn, 6)
+
+	inputSegment := &segment{
+		ACK:       true,
+		SeqNumber: conn.rxLastInSeq + 1,
+		AckNumber: 0x7FFE,
+	}
+
+	conn.handleSegment(inputSegment)
+	validateTxBuffer(conn, []uint16{0x7FFF, 0x8000, 0x8001, 0x8002, 0x8003}, t)
+
+	inputSegment = &segment{
+		ACK:       true,
+		SeqNumber: conn.rxLastInSeq + 1,
+		AckNumber: 0x8001,
+	}
+
+	conn.handleSegment(inputSegment)
+	validateTxBuffer(conn, []uint16{0x8002, 0x8003}, t)
+}
+
 func TestEakHandling(t *testing.T) {
 	conn := NewConn()
 

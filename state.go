@@ -82,6 +82,7 @@ func NewConn() *conn {
 
 func (self *conn) handleSegment(segment *segment) error {
 	if action, err := self.validateSegment(segment); action != none {
+		// TODO perform action
 		return err
 	}
 
@@ -129,7 +130,7 @@ func (self *conn) handleSegment(segment *segment) error {
 		// Handle ACK
 		if segment.ACK {
 			// Check for positive unsigned diff AckNumber > txOldestUnacked
-			if diff := segment.AckNumber - self.txOldestUnacked; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+			if diff := int16(segment.AckNumber - self.txOldestUnacked); diff > 0 {
 				self.txOldestUnacked = segment.AckNumber
 				self.clearAckedTxBuffer()
 			}
@@ -231,7 +232,7 @@ func (self *conn) removeFromTxBuffer(seqNumber uint16) {
 		}
 
 		// Check for positive unsigned diff: buffer SeqNumber > input seqNumber
-		if diff := entry.SeqNumber - seqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+		if diff := int16(entry.SeqNumber - seqNumber); diff > 0 {
 			break
 		}
 	}
@@ -243,7 +244,7 @@ func (self *conn) clearAckedTxBuffer() {
 		entry := element.Value.(*txBufferEntry)
 
 		// Check for positive unsigned diff: SeqNumber > txOldestUnacked
-		if diff := entry.SeqNumber - self.txOldestUnacked; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+		if diff := int16(entry.SeqNumber - self.txOldestUnacked); diff > 0 {
 			break
 		}
 
@@ -283,7 +284,7 @@ func (self *conn) bufferRxData(seqNumber uint16, data []byte) {
 		}
 
 		// Check for positive unsigned diff: entry SeqNumber > input seqNumber
-		if diff := entry.SeqNumber - seqNumber; diff != 0 && diff < self.config.MaxOutstandingSegmentsPeer {
+		if diff := int16(entry.SeqNumber - seqNumber); diff > 0 {
 			break
 		}
 	}
