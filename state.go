@@ -21,6 +21,15 @@ const (
 	closeWait
 )
 
+// Response action
+type action int
+
+const (
+	none action = iota
+	discard
+	reset
+)
+
 type connConfig struct {
 	MaxOutstandingSegmentsSelf uint16
 	MaxOutstandingSegmentsPeer uint16
@@ -72,11 +81,38 @@ func NewConn() *conn {
 }
 
 func (self *conn) handleSegment(segment *segment) error {
-	if err := self.validateSegment(segment); err != nil {
+	if action, err := self.validateSegment(segment); action != none {
 		return err
 	}
 
 	switch self.state {
+
+	case synSent:
+		if segment.RST {
+			self.closed()
+			break
+		}
+		fallthrough
+
+	case listen:
+		synHeader := segment.VarHeader.(*synVarHeader)
+		if err := self.handshakeConfig(synHeader); err != nil {
+			// TODO Respond with RST
+			return err
+		}
+
+		if segment.ACK {
+			// TODO Respond with ACK
+			self.connected()
+		} else {
+			// TODO Respond with SYN ACK
+			self.state = synReceived
+		}
+
+	case synReceived:
+		self.connected()
+		// TODO Handle out of seq data
+
 	case open:
 		// Handle RST & break
 		if segment.RST {
@@ -86,7 +122,7 @@ func (self *conn) handleSegment(segment *segment) error {
 
 		// Handle NUL & break
 		if segment.NUL {
-			// TODO validate SeqNumber and send ACK
+			// TODO validate SeqNumber and respond with ACK
 			break
 		}
 
@@ -117,15 +153,71 @@ func (self *conn) handleSegment(segment *segment) error {
 				self.bufferRxData(segment.SeqNumber, segment.Data)
 			}
 		}
-	default:
-		return fmt.Errorf("State %s not implemented", self.state)
+
+	case closeWait:
+		if segment.RST {
+			self.closed()
+			break
+		}
+
 	}
 
 	return nil
 }
 
-func (self *conn) validateSegment(segment *segment) error {
-	// TODO Check for unexpected segment header
+func (self *conn) validateSegment(segment *segment) (action, error) {
+	// Check for unexpected segment header
+	switch self.state {
+
+	case closed:
+		return discard, fmt.Errorf("Unexpected segment")
+
+	case listen:
+		if !segment.SYN || segment.ACK || segment.EAK || segment.RST || segment.NUL {
+			return discard, fmt.Errorf("Invalid segment flags")
+		}
+
+		// Not sure if this is needed if already checked during deserialisation
+		if _, ok := segment.VarHeader.(*synVarHeader); !ok {
+			return reset, fmt.Errorf("SYN segment missing header")
+		}
+
+	case synSent:
+		if segment.RST {
+			break
+		}
+
+		if segment.SYN && !segment.EAK && !segment.NUL {
+			// Not sure if this is needed if already checked during deserialisation
+			if _, ok := segment.VarHeader.(*synVarHeader); !ok {
+				return reset, fmt.Errorf("SYN segment missing header")
+			}
+
+			if segment.ACK && segment.AckNumber != self.txNextSeq - 1 {
+				return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
+			}
+
+			break
+		}
+
+		return discard, fmt.Errorf("Unexpected segment")
+
+	case synReceived:
+	case open:
+
+	case closeWait:
+		if !segment.RST {
+			return discard, fmt.Errorf("Unexpected segment")
+		}
+
+	}
+
+	return none, nil
+}
+
+func (self *conn) handshakeConfig(synHeader *synVarHeader) error {
+	// TODO Validate config is compatible/agreeable
+	// TODO Init connection config
 	return nil
 }
 
@@ -206,4 +298,14 @@ func (self *conn) bufferRxData(seqNumber uint16, data []byte) {
 	} else {
 		self.rxBuffer.PushBack(entry)
 	}
+}
+
+func (self *conn) connected() {
+	// TODO Notify listeners, start timers
+	self.state = open
+}
+
+func (self *conn) closed() {
+	// TODO Clean up connection, timers, listeners etc.
+	self.state = closed
 }
