@@ -28,6 +28,7 @@ const (
 	none action = iota
 	discard
 	reset
+	ack
 )
 
 type connConfig struct {
@@ -111,13 +112,18 @@ func (self *conn) handleSegment(segment *segment) error {
 		}
 
 	case synReceived:
+		if segment.RST {
+			self.closed()
+			break
+		}
+
 		self.connected()
-		// TODO Handle out of seq data
+		fallthrough
 
 	case open:
 		// Handle RST & break
 		if segment.RST {
-			// TODO Update state
+			self.closed()
 			break
 		}
 
@@ -188,22 +194,41 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 			break
 		}
 
-		if segment.SYN && !segment.EAK && !segment.NUL {
-			// Not sure if this is needed if already checked during deserialisation
-			if _, ok := segment.VarHeader.(*synVarHeader); !ok {
-				return reset, fmt.Errorf("SYN segment missing header")
-			}
+		if !(segment.SYN && !segment.EAK && !segment.NUL) {
+			return discard, fmt.Errorf("Invalid segment flags")
+		}
 
-			if segment.ACK && segment.AckNumber != self.txNextSeq - 1 {
-				return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
-			}
+		// Not sure if this is needed if already checked during deserialisation
+		if _, ok := segment.VarHeader.(*synVarHeader); !ok {
+			return reset, fmt.Errorf("SYN segment missing header")
+		}
 
+		if segment.ACK && segment.AckNumber != self.txNextSeq - 1 {
+			return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
+		}
+
+	case synReceived:
+		if segment.RST {
 			break
 		}
 
-		return discard, fmt.Errorf("Unexpected segment")
+		if segment.SYN || segment.EAK {
+			return reset, fmt.Errorf("Invalid segment flags")
+		}
 
-	case synReceived:
+		// Check sequence number is in valid range
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2 * self.config.MaxOutstandingSegmentsSelf) {
+			return ack, fmt.Errorf("Unexpected sequence number")
+		}
+
+		if !segment.ACK {
+			return discard, fmt.Errorf("Need ACK for initial SYN before proceeding")
+		}
+
+		if segment.AckNumber != self.txNextSeq - 1 {
+			return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
+		}
+
 	case open:
 
 	case closeWait:
