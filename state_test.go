@@ -115,7 +115,7 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 
 	inputSegment := &segment{
 		SeqNumber: 6,
-		Data: []byte{0},
+		Data:      []byte{0},
 	}
 
 	conn.handleSegment(inputSegment)
@@ -123,7 +123,7 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 
 	inputSegment = &segment{
 		SeqNumber: 2,
-		Data: []byte{0},
+		Data:      []byte{0},
 	}
 
 	conn.handleSegment(inputSegment)
@@ -131,7 +131,7 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 
 	inputSegment = &segment{
 		SeqNumber: 3,
-		Data: []byte{0},
+		Data:      []byte{0},
 	}
 
 	conn.handleSegment(inputSegment)
@@ -139,7 +139,7 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 
 	inputSegment = &segment{
 		SeqNumber: 7,
-		Data: []byte{0},
+		Data:      []byte{0},
 	}
 
 	conn.handleSegment(inputSegment)
@@ -147,7 +147,7 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 
 	inputSegment = &segment{
 		SeqNumber: 1,
-		Data: []byte{0},
+		Data:      []byte{0},
 	}
 
 	conn.handleSegment(inputSegment)

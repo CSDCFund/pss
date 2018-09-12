@@ -204,7 +204,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 			return reset, fmt.Errorf("SYN segment missing header")
 		}
 
-		if segment.ACK && segment.AckNumber != self.txNextSeq - 1 {
+		if segment.ACK && segment.AckNumber != self.txNextSeq-1 {
 			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
@@ -215,7 +215,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 
 		// Check sequence number is in valid range
 		// Do this before checking other data to gracefully handle late or duplicate segments
-		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2 * self.config.MaxOutstandingSegmentsSelf) {
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
 			return ack, fmt.Errorf("Unexpected sequence number")
 		}
 
@@ -227,7 +227,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 			return discard, fmt.Errorf("Need ACK for initial SYN before proceeding")
 		}
 
-		if segment.AckNumber != self.txNextSeq - 1 {
+		if segment.AckNumber != self.txNextSeq-1 {
 			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
@@ -238,7 +238,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 
 		// Check sequence number is in valid range
 		// Do this before checking other data to gracefully handle late or duplicate segments
-		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2 * self.config.MaxOutstandingSegmentsSelf) {
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
 			return ack, fmt.Errorf("Unexpected sequence number")
 		}
 
@@ -361,7 +361,7 @@ func (self *conn) bufferRxData(seqNumber uint16, data []byte) {
 
 	entry := &rxBufferEntry{
 		SeqNumber: seqNumber,
-		Data: data,
+		Data:      data,
 	}
 
 	if element != nil {
