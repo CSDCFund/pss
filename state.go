@@ -123,6 +123,7 @@ func (self *conn) handleSegment(segment *segment) error {
 	case open:
 		// Handle RST & break
 		if segment.RST {
+			// TODO transition to closeWait
 			self.closed()
 			break
 		}
@@ -204,7 +205,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 		}
 
 		if segment.ACK && segment.AckNumber != self.txNextSeq - 1 {
-			return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
+			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
 	case synReceived:
@@ -212,13 +213,14 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 			break
 		}
 
-		if segment.SYN || segment.EAK {
-			return reset, fmt.Errorf("Invalid segment flags")
-		}
-
 		// Check sequence number is in valid range
+		// Do this before checking other data to gracefully handle late or duplicate segments
 		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2 * self.config.MaxOutstandingSegmentsSelf) {
 			return ack, fmt.Errorf("Unexpected sequence number")
+		}
+
+		if segment.SYN || segment.EAK {
+			return reset, fmt.Errorf("Invalid segment flags")
 		}
 
 		if !segment.ACK {
@@ -226,10 +228,53 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 		}
 
 		if segment.AckNumber != self.txNextSeq - 1 {
-			return reset, fmt.Errorf("Inital ACK doesn't match initial sequence number")
+			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
 	case open:
+		if segment.RST {
+			break
+		}
+
+		// Check sequence number is in valid range
+		// Do this before checking other data to gracefully handle late or duplicate segments
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2 * self.config.MaxOutstandingSegmentsSelf) {
+			return ack, fmt.Errorf("Unexpected sequence number")
+		}
+
+		if segment.SYN {
+			return reset, fmt.Errorf("Invalid segment flags")
+		}
+
+		if segment.NUL && len(segment.Data) > 0 {
+			return discard, fmt.Errorf("NUL segment must not contain data payload")
+		}
+
+		if segment.ACK {
+			if diff := int16(segment.AckNumber - self.txNextSeq); diff >= 0 {
+				return discard, fmt.Errorf("ACK received for unsent sequence number")
+			}
+		}
+
+		if segment.EAK {
+			if !segment.ACK {
+				return discard, fmt.Errorf("Invalid segment flags")
+			}
+
+			eakHeader, ok := segment.VarHeader.(*eakVarHeader)
+			if !ok || len(eakHeader.EakNumbers) == 0 {
+				return reset, fmt.Errorf("EAK segment missing header")
+			}
+
+			for _, eak := range eakHeader.EakNumbers {
+				if diff := int16(eak - segment.AckNumber); diff < 0 {
+					return discard, fmt.Errorf("EAK number smaller than segment ACK number")
+				}
+				if diff := int16(eak - self.txNextSeq); diff >= 0 {
+					return discard, fmt.Errorf("EAK received for unsent sequence number")
+				}
+			}
+		}
 
 	case closeWait:
 		if !segment.RST {
