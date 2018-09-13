@@ -7,7 +7,7 @@ import (
 func TestSimpleAckHandling(t *testing.T) {
 	conn := NewConn()
 
-	conn.state = open
+	conn.state = stateOpen
 	conn.config = defaultConfig()
 	conn.txNextSeq = 1
 	conn.txOldestUnacked = conn.txNextSeq - 1
@@ -27,7 +27,7 @@ func TestSimpleAckHandling(t *testing.T) {
 func TestUintWrappingAckHandling(t *testing.T) {
 	conn := NewConn()
 
-	conn.state = open
+	conn.state = stateOpen
 	conn.config = defaultConfig()
 	conn.txNextSeq = 0xFFFE
 	conn.txOldestUnacked = conn.txNextSeq - 1
@@ -56,7 +56,7 @@ func TestUintWrappingAckHandling(t *testing.T) {
 func TestIntWrappingAckHandling(t *testing.T) {
 	conn := NewConn()
 
-	conn.state = open
+	conn.state = stateOpen
 	conn.config = defaultConfig()
 	conn.txNextSeq = 0x7FFE
 	conn.txOldestUnacked = conn.txNextSeq - 1
@@ -85,7 +85,7 @@ func TestIntWrappingAckHandling(t *testing.T) {
 func TestEakHandling(t *testing.T) {
 	conn := NewConn()
 
-	conn.state = open
+	conn.state = stateOpen
 	conn.config = defaultConfig()
 	conn.txNextSeq = 1
 	conn.txOldestUnacked = conn.txNextSeq - 1
@@ -109,7 +109,7 @@ func TestEakHandling(t *testing.T) {
 func TestOutOfSeqRxBuffer(t *testing.T) {
 	conn := NewConn()
 
-	conn.state = open
+	conn.state = stateOpen
 	conn.config = defaultConfig()
 	conn.rxLastInSeq = 0
 

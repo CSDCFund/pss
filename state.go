@@ -1,6 +1,7 @@
 package psst
 
 //go:generate stringer -type=connState
+//go:generate stringer -type=action
 
 import (
 	"container/list"
@@ -13,22 +14,22 @@ import (
 type connState int
 
 const (
-	closed connState = iota
-	listen
-	synSent
-	synReceived
-	open
-	closeWait
+	stateClosed connState = iota
+	stateListen
+	stateSynSent
+	stateSynReceived
+	stateOpen
+	stateCloseWait
 )
 
 // Response action
 type action int
 
 const (
-	none action = iota
-	discard
-	reset
-	ack
+	actionContinue action = iota
+	actionDiscard
+	actionReset
+	actionAck
 )
 
 type connConfig struct {
@@ -73,7 +74,7 @@ type conn struct {
 func NewConn() *conn {
 	initialSeqNumber := uint16(rand.Int())
 	return &conn{
-		state:           closed,
+		state:           stateClosed,
 		txNextSeq:       initialSeqNumber + 1,
 		txOldestUnacked: initialSeqNumber,
 		txBuffer:        list.New(),
@@ -82,21 +83,21 @@ func NewConn() *conn {
 }
 
 func (self *conn) handleSegment(segment *segment) error {
-	if action, err := self.validateSegment(segment); action != none {
+	if action, err := self.validateSegment(segment); action != actionContinue {
 		// TODO perform action
 		return err
 	}
 
 	switch self.state {
 
-	case synSent:
+	case stateSynSent:
 		if segment.RST {
 			self.closed()
 			break
 		}
 		fallthrough
 
-	case listen:
+	case stateListen:
 		synHeader := segment.VarHeader.(*synVarHeader)
 		if err := self.handshakeConfig(synHeader); err != nil {
 			// TODO Respond with RST
@@ -108,10 +109,10 @@ func (self *conn) handleSegment(segment *segment) error {
 			self.connected()
 		} else {
 			// TODO Respond with SYN ACK
-			self.state = synReceived
+			self.state = stateSynReceived
 		}
 
-	case synReceived:
+	case stateSynReceived:
 		if segment.RST {
 			self.closed()
 			break
@@ -120,10 +121,10 @@ func (self *conn) handleSegment(segment *segment) error {
 		self.connected()
 		fallthrough
 
-	case open:
+	case stateOpen:
 		// Handle RST & break
 		if segment.RST {
-			// TODO transition to closeWait
+			// TODO transition to stateCloseWait
 			self.closed()
 			break
 		}
@@ -162,7 +163,7 @@ func (self *conn) handleSegment(segment *segment) error {
 			}
 		}
 
-	case closeWait:
+	case stateCloseWait:
 		if segment.RST {
 			self.closed()
 			break
@@ -177,38 +178,38 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 	// Check for unexpected segment header
 	switch self.state {
 
-	case closed:
-		return discard, fmt.Errorf("Unexpected segment")
+	case stateClosed:
+		return actionDiscard, fmt.Errorf("Unexpected segment")
 
-	case listen:
+	case stateListen:
 		if !segment.SYN || segment.ACK || segment.EAK || segment.RST || segment.NUL {
-			return discard, fmt.Errorf("Invalid segment flags")
+			return actionDiscard, fmt.Errorf("Invalid segment flags")
 		}
 
 		// Not sure if this is needed if already checked during deserialisation
 		if _, ok := segment.VarHeader.(*synVarHeader); !ok {
-			return reset, fmt.Errorf("SYN segment missing header")
+			return actionReset, fmt.Errorf("SYN segment missing header")
 		}
 
-	case synSent:
+	case stateSynSent:
 		if segment.RST {
 			break
 		}
 
 		if !(segment.SYN && !segment.EAK && !segment.NUL) {
-			return discard, fmt.Errorf("Invalid segment flags")
+			return actionDiscard, fmt.Errorf("Invalid segment flags")
 		}
 
 		// Not sure if this is needed if already checked during deserialisation
 		if _, ok := segment.VarHeader.(*synVarHeader); !ok {
-			return reset, fmt.Errorf("SYN segment missing header")
+			return actionReset, fmt.Errorf("SYN segment missing header")
 		}
 
 		if segment.ACK && segment.AckNumber != self.txNextSeq-1 {
-			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
+			return actionReset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
-	case synReceived:
+	case stateSynReceived:
 		if segment.RST {
 			break
 		}
@@ -216,22 +217,22 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 		// Check sequence number is in valid range
 		// Do this before checking other data to gracefully handle late or duplicate segments
 		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
-			return ack, fmt.Errorf("Unexpected sequence number")
+			return actionAck, fmt.Errorf("Unexpected sequence number")
 		}
 
 		if segment.SYN || segment.EAK {
-			return reset, fmt.Errorf("Invalid segment flags")
+			return actionReset, fmt.Errorf("Invalid segment flags")
 		}
 
 		if !segment.ACK {
-			return discard, fmt.Errorf("Need ACK for initial SYN before proceeding")
+			return actionDiscard, fmt.Errorf("Need ACK for initial SYN before proceeding")
 		}
 
 		if segment.AckNumber != self.txNextSeq-1 {
-			return reset, fmt.Errorf("Inital ACK does not match initial sequence number")
+			return actionReset, fmt.Errorf("Inital ACK does not match initial sequence number")
 		}
 
-	case open:
+	case stateOpen:
 		if segment.RST {
 			break
 		}
@@ -239,51 +240,51 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 		// Check sequence number is in valid range
 		// Do this before checking other data to gracefully handle late or duplicate segments
 		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
-			return ack, fmt.Errorf("Unexpected sequence number")
+			return actionAck, fmt.Errorf("Unexpected sequence number")
 		}
 
 		if segment.SYN {
-			return reset, fmt.Errorf("Invalid segment flags")
+			return actionReset, fmt.Errorf("Invalid segment flags")
 		}
 
 		if segment.NUL && len(segment.Data) > 0 {
-			return discard, fmt.Errorf("NUL segment must not contain data payload")
+			return actionDiscard, fmt.Errorf("NUL segment must not contain data payload")
 		}
 
 		if segment.ACK {
 			if diff := int16(segment.AckNumber - self.txNextSeq); diff >= 0 {
-				return discard, fmt.Errorf("ACK received for unsent sequence number")
+				return actionDiscard, fmt.Errorf("ACK received for unsent sequence number")
 			}
 		}
 
 		if segment.EAK {
 			if !segment.ACK {
-				return discard, fmt.Errorf("Invalid segment flags")
+				return actionDiscard, fmt.Errorf("Invalid segment flags")
 			}
 
 			eakHeader, ok := segment.VarHeader.(*eakVarHeader)
 			if !ok || len(eakHeader.EakNumbers) == 0 {
-				return reset, fmt.Errorf("EAK segment missing header")
+				return actionReset, fmt.Errorf("EAK segment missing header")
 			}
 
 			for _, eak := range eakHeader.EakNumbers {
 				if diff := int16(eak - segment.AckNumber); diff < 0 {
-					return discard, fmt.Errorf("EAK number smaller than segment ACK number")
+					return actionDiscard, fmt.Errorf("EAK number smaller than segment ACK number")
 				}
 				if diff := int16(eak - self.txNextSeq); diff >= 0 {
-					return discard, fmt.Errorf("EAK received for unsent sequence number")
+					return actionDiscard, fmt.Errorf("EAK received for unsent sequence number")
 				}
 			}
 		}
 
-	case closeWait:
+	case stateCloseWait:
 		if !segment.RST {
-			return discard, fmt.Errorf("Unexpected segment")
+			return actionDiscard, fmt.Errorf("Unexpected segment")
 		}
 
 	}
 
-	return none, nil
+	return actionContinue, nil
 }
 
 func (self *conn) handshakeConfig(synHeader *synVarHeader) error {
@@ -373,10 +374,10 @@ func (self *conn) bufferRxData(seqNumber uint16, data []byte) {
 
 func (self *conn) connected() {
 	// TODO Notify listeners, start timers
-	self.state = open
+	self.state = stateOpen
 }
 
 func (self *conn) closed() {
 	// TODO Clean up connection, timers, listeners etc.
-	self.state = closed
+	self.state = stateClosed
 }

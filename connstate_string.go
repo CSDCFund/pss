@@ -4,9 +4,9 @@ package psst
 
 import "strconv"
 
-const _connState_name = "closedlistensynSentsynReceivedopencloseWait"
+const _connState_name = "stateClosedstateListenstateSynSentstateSynReceivedstateOpenstateCloseWait"
 
-var _connState_index = [...]uint8{0, 6, 12, 19, 30, 34, 43}
+var _connState_index = [...]uint8{0, 11, 22, 34, 50, 59, 73}
 
 func (i connState) String() string {
 	if i < 0 || i >= connState(len(_connState_index)-1) {
