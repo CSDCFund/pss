@@ -214,9 +214,12 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 			break
 		}
 
+		if segment.SYN || segment.EAK {
+			return actionReset, fmt.Errorf("Invalid segment flags")
+		}
+
 		// Check sequence number is in valid range
-		// Do this before checking other data to gracefully handle late or duplicate segments
-		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff <= 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
 			return actionAck, fmt.Errorf("Unexpected sequence number")
 		}
 
@@ -239,7 +242,7 @@ func (self *conn) validateSegment(segment *segment) (action, error) {
 
 		// Check sequence number is in valid range
 		// Do this before checking other data to gracefully handle late or duplicate segments
-		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff < 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
+		if diff := int16(segment.SeqNumber - self.rxLastInSeq); diff <= 0 || diff > int16(2*self.config.MaxOutstandingSegmentsSelf) {
 			return actionAck, fmt.Errorf("Unexpected sequence number")
 		}
 

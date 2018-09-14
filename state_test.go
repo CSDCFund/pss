@@ -154,6 +154,172 @@ func TestOutOfSeqRxBuffer(t *testing.T) {
 	validateRxBuffer(conn, []uint16{6, 7}, t)
 }
 
+func TestClosedStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateClosed
+	conn.config = defaultConfig()
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{SYN: true, VarHeader: &synVarHeader{}}, actionDiscard},
+		{&segment{ACK: true, AckNumber: conn.txNextSeq - 1}, actionDiscard},
+		{&segment{RST: true}, actionDiscard},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
+func TestListenStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateListen
+	conn.config = defaultConfig()
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{SYN: true, VarHeader: &synVarHeader{}}, actionContinue},
+		{&segment{ACK: true, AckNumber: conn.txNextSeq - 1}, actionDiscard},
+		{&segment{RST: true}, actionDiscard},
+		{&segment{SYN: true, ACK: true, AckNumber: conn.txNextSeq - 1, VarHeader: &synVarHeader{}}, actionDiscard},
+		{&segment{SYN: true}, actionReset},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
+func TestSynSentStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateSynSent
+	conn.config = defaultConfig()
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{RST: true}, actionContinue},
+		{&segment{SYN: true, VarHeader: &synVarHeader{}}, actionContinue},
+		{&segment{SYN: true, ACK: true, AckNumber: conn.txNextSeq - 1, VarHeader: &synVarHeader{}}, actionContinue},
+		{&segment{ACK: true, AckNumber: conn.txNextSeq - 1}, actionDiscard},
+		{&segment{NUL: true}, actionDiscard},
+		{&segment{SYN: true}, actionReset},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
+func TestSynReceivedStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateSynReceived
+	conn.config = defaultConfig()
+	conn.txNextSeq = 0x1234
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{RST: true}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq - 1}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq - 1, Data: []byte{0}}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + conn.config.MaxOutstandingSegmentsSelf, AckNumber: conn.txNextSeq - 1, Data: []byte{0}}, actionContinue},
+		{&segment{ACK: true, NUL: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq - 1}, actionContinue},
+		{&segment{NUL: true, SeqNumber: conn.rxLastInSeq + 1}, actionDiscard},
+		{&segment{SeqNumber: conn.rxLastInSeq + 1, Data: []byte{0}}, actionDiscard},
+		{&segment{SYN: true, VarHeader: &synVarHeader{}}, actionReset},
+		{&segment{SYN: true, ACK: true, AckNumber: conn.txNextSeq - 1, VarHeader: &synVarHeader{}}, actionReset},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq}, actionReset},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq - 2}, actionReset},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + (3 * conn.config.MaxOutstandingSegmentsSelf), AckNumber: conn.txNextSeq - 1, Data: []byte{0}}, actionAck},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
+func TestOpenStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateOpen
+	conn.config = defaultConfig()
+	conn.txNextSeq = 0x1234
+	conn.txOldestUnacked = conn.txNextSeq - 10
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{RST: true}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked, Data: []byte{0}}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + conn.config.MaxOutstandingSegmentsSelf, AckNumber: conn.txOldestUnacked, Data: []byte{0}}, actionContinue},
+		{&segment{ACK: true, EAK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked, VarHeader: &eakVarHeader{EakNumbers: []uint16{conn.txOldestUnacked + 2}}}, actionContinue},
+		{&segment{ACK: true, NUL: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked}, actionContinue},
+		{&segment{NUL: true, SeqNumber: conn.rxLastInSeq + 1}, actionContinue},
+		{&segment{SeqNumber: conn.rxLastInSeq + 1, Data: []byte{0}}, actionContinue},
+		{&segment{NUL: true, SeqNumber: conn.rxLastInSeq + 1, Data: []byte{0}}, actionDiscard},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq}, actionDiscard},
+		{&segment{EAK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked, VarHeader: &eakVarHeader{EakNumbers: []uint16{conn.txOldestUnacked + 2}}}, actionDiscard},
+		{&segment{ACK: true, EAK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked, VarHeader: &eakVarHeader{EakNumbers: []uint16{conn.txOldestUnacked + 20}}}, actionDiscard},
+		{&segment{ACK: true, EAK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked + 5, VarHeader: &eakVarHeader{EakNumbers: []uint16{conn.txOldestUnacked + 2}}}, actionDiscard},
+		{&segment{SYN: true, SeqNumber: conn.rxLastInSeq + 1, VarHeader: &synVarHeader{}}, actionReset},
+		{&segment{ACK: true, EAK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txOldestUnacked}, actionReset},
+		{&segment{SYN: true, SeqNumber: conn.rxLastInSeq, VarHeader: &synVarHeader{}}, actionAck},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + (3 * conn.config.MaxOutstandingSegmentsSelf), AckNumber: conn.txNextSeq - 1, Data: []byte{0}}, actionAck},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
+func TestCloseWaitStateSegmentValidation(t *testing.T) {
+	conn := NewConn()
+
+	conn.state = stateCloseWait
+	conn.config = defaultConfig()
+	conn.txNextSeq = 0x1234
+
+	input := []struct {
+		*segment
+		action
+	}{
+		{&segment{RST: true}, actionContinue},
+		{&segment{ACK: true, SeqNumber: conn.rxLastInSeq + 1, AckNumber: conn.txNextSeq - 1}, actionDiscard},
+		{&segment{NUL: true, SeqNumber: conn.rxLastInSeq + 1}, actionDiscard},
+		{&segment{SeqNumber: conn.rxLastInSeq + 1, Data: []byte{0}}, actionDiscard},
+		{&segment{SYN: true, VarHeader: &synVarHeader{}}, actionDiscard},
+	}
+
+	for _, i := range input {
+		if action, _ := conn.validateSegment(i.segment); action != i.action {
+			t.Fatalf("Segment validation action %v for segment %v doesn't match expected %v", action, i.segment, i.action)
+		}
+	}
+}
+
 func defaultConfig() *connConfig {
 	return &connConfig{
 		MaxOutstandingSegmentsSelf: 10,
